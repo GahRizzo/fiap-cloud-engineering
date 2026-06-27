@@ -40,10 +40,10 @@ Três arquiteturas de ingestão funcionando e comparadas com dados reais, e a in
 | 1 | [O cenário: PedeJá](#parte-1---o-cenário-pedejá) | A história e o conjunto de dados fixo de pedidos. | [1](#passo-1) | ~5 min |
 | 2 | [Fase 1 — Ingestão direta (Lambda → S3)](#parte-2---fase-1-ingestão-direta) | API GW → Lambda → S3. Funciona, observe os golden signals e destrua. | [2](#passo-2) · [3](#passo-3) · [4](#passo-4) · [5](#passo-5) · [6](#passo-6) · [7](#passo-7) · [8](#passo-8) | ~15 min |
 | 3 | [Fase 2 — A Black Friday (SQS)](#parte-3---fase-2-a-black-friday) | O pico quebra a v1. Desacople com fila + DLQ e destrua. | [9](#passo-9) · [10](#passo-10) · [11](#passo-11) · [12](#passo-12) · [13](#passo-13) · [14](#passo-14) | ~15 min |
-| 4 | [Fase 3 — Três times, um dado (Kinesis + Firehose + Athena)](#parte-4---fase-3-três-times-um-dado) | 5.000 pedidos. Firehose → Parquet → Athena, e faturamento em tempo real. Depois destrua. | [15](#passo-15) · [16](#passo-16) · [17](#passo-17) · [18](#passo-18) · [19](#passo-19) · [20](#passo-20) · [21](#passo-21) | ~20 min |
-| 5 | [Conclusão e decisão](#parte-5---conclusão-e-decisão) | Tabela comparativa e o documento de decisão. | [22](#passo-22) | ~5 min |
+| 4 | [Fase 3 — Três times, um dado (Kinesis + Firehose + Athena)](#parte-4---fase-3-três-times-um-dado) | 5.000 pedidos. Firehose → Parquet → Athena (CLI e console), e faturamento em tempo real. Depois destrua. | [15](#passo-15) · [16](#passo-16) · [17](#passo-17) · [18](#passo-18) · [19](#passo-19) · [20](#passo-20) · [21](#passo-21) · [22](#passo-22) | ~25 min |
+| 5 | [Conclusão e decisão](#parte-5---conclusão-e-decisão) | Tabela comparativa e o documento de decisão. | [23](#passo-23) | ~5 min |
 
-> Os passos 3, 10 e 16 têm sub-passos (3.1/3.2 etc.) — clique no número para ir à parte. Os passos 8, 14 e 21 são o `terraform destroy` de cada fase: **não pule**.
+> Os passos 3, 10, 16 e 20 têm sub-passos (3.1/3.2 etc.) — clique no número para ir à parte. Os passos 8, 14 e 22 são o `terraform destroy` de cada fase: **não pule**.
 
 > Se travou em algum passo, clique no número no mapa acima para ir direto a ele.
 
@@ -599,9 +599,6 @@ Saída esperada (o faturamento é 500× o da Parte 1):
      Resultado da query no Athena: 4 cidades com 5000 pedidos no total e faturamento 500x. Pode ser no console do Athena (mais visual) ou no terminal. -->
 ![](img/f3-athena.png)
 
-> [!TIP]
-> Prefere o console? Abra o **[Athena Query Editor](https://us-east-1.console.aws.amazon.com/athena/home?region=us-east-1#/query-editor)**, no seletor de **workgroup** (canto superior direito) escolha **`pedeja`**, selecione o database `pedeja` à esquerda e rode a mesma query. O workgroup já vem com o local de resultados configurado — você **não** precisa configurar nada.
-
 <details>
 <summary><b>⚠ Se der erro: <code>0 pedidos</code> ou tabela vazia no Athena</b></summary>
 <blockquote>
@@ -610,10 +607,36 @@ O Firehose ainda não fechou o buffer (60s). Espere mais ~30s e rode a query de 
 </details>
 
 <a id="passo-20"></a>
-**20.** Pegue o link do dashboard `PedeJa-Fase3-Streaming` e abra no navegador:
+**20.** Agora veja o **mesmo dado pela ótica de quem analisa**: rode a query no **console do Athena**, como um analista de BI faria no dia a dia. É o destino final do pipeline — dado de streaming virou tabela consultável em SQL.
+
+**20.1.** Abra o **[Athena Query Editor](https://us-east-1.console.aws.amazon.com/athena/home?region=us-east-1#/query-editor)**. No seletor de **Workgroup** (canto superior direito), escolha **`pedeja`** — ele já vem com o local de resultados configurado, então **não** aparece o aviso de "configure um output location".
+
+<!-- PRINT SUGERIDO: img/f3-athena-workgroup.png
+     Topo do Athena Query Editor com o seletor de Workgroup aberto e "pedeja" selecionado. -->
+![](img/f3-athena-workgroup.png)
+
+**20.2.** No painel esquerdo, em **Database**, selecione **`pedeja`**. A tabela **`pedidos`** aparece na lista — clique nos três pontos ao lado dela e em **Preview Table** para ver as 10 primeiras linhas (o Athena lê direto o Parquet que o Firehose gravou).
+
+**20.3.** Cole esta query no editor e clique em **Run** (ou `Ctrl/Cmd + Enter`):
+
+```sql
+SELECT cidade, COUNT(*) AS pedidos, ROUND(SUM(valor), 2) AS faturamento
+FROM pedeja.pedidos
+GROUP BY cidade
+ORDER BY faturamento DESC;
+```
+
+O resultado é o mesmo da tabela do passo 19 — mas agora você o vê no editor visual, com o **tempo de execução** e os **dados escaneados** que o Athena reporta abaixo da query. Esse é o ponto de chegada: **um time de BI consulta os pedidos da PedeJá em SQL, segundos após eles entrarem no stream**.
+
+<!-- PRINT SUGERIDO: img/f3-athena-query.png
+     Athena Query Editor com a query rodada e a tabela de resultado (4 cidades, faturamento por cidade) + o "Run time" e "Data scanned" abaixo. -->
+![](img/f3-athena-query.png)
+
+<a id="passo-21"></a>
+**21.** Pegue o link do dashboard `PedeJa-Fase3-Streaming` e abra no navegador:
 
 ```bash
-terraform -chdir=/workspaces/fiap-cloud-engineering/03-Compute/03-Lambda/fase-3-streaming output -raw dashboard_url
+terraform -chdir=/workspaces/fiap-cloud-engineering/03-Compute/03-Lambda/fase-3-streaming output -raw dashboard_url && echo
 ```
 
 Abra a URL impressa — ou vá direto pelo link **[CloudWatch → Dashboards → PedeJa-Fase3-Streaming](https://us-east-1.console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/PedeJa-Fase3-Streaming)**. Você vê **publicados (5000) vs entregue ao S3 em Parquet (Firehose)** convergindo, e o **data freshness** do Firehose (quantos segundos o dado levou para chegar ao S3 — perto de 60s).
@@ -622,8 +645,8 @@ Abra a URL impressa — ou vá direto pelo link **[CloudWatch → Dashboards →
      Dashboard PedeJa-Fase3-Streaming: publicados vs entregue em Parquet, data freshness do Firehose e faturamento por cidade. -->
 ![](img/f3-dashboard.png)
 
-<a id="passo-21"></a>
-**21.** Destrua a Fase 3:
+<a id="passo-22"></a>
+**22.** Destrua a Fase 3:
 
 ```bash
 cd /workspaces/fiap-cloud-engineering/03-Compute/03-Lambda/fase-3-streaming
@@ -656,8 +679,8 @@ Você resolveu o **mesmo** problema de negócio três vezes, e cada arquitetura 
 
 A lição central de engenharia de dados: **não existe arquitetura "certa" no vácuo**. A Fase 1 não é "errada" — ela é a escolha certa enquanto o volume é baixo. O que mudou foi o *problema*, e os **dados de observabilidade** (latência subindo, saturação, depois a necessidade de múltiplos consumidores) é que justificaram cada evolução. Você não adivinhou: mediu.
 
-<a id="passo-22"></a>
-**22.** Escreva sua decisão. Crie um arquivo `DECISION.md` na pasta do lab respondendo, em poucas linhas, como se fosse para a Marina:
+<a id="passo-23"></a>
+**23.** Escreva sua decisão. Crie um arquivo `DECISION.md` na pasta do lab respondendo, em poucas linhas, como se fosse para a Marina:
 
 ```bash
 code /workspaces/fiap-cloud-engineering/03-Compute/03-Lambda/DECISION.md
